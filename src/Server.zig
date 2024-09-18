@@ -354,27 +354,24 @@ fn getAutofixMode(server: *Server) enum {
 fn autofix(server: *Server, arena: std.mem.Allocator, handle: *DocumentStore.Handle) error{OutOfMemory}!std.ArrayListUnmanaged(types.TextEdit) {
     if (handle.tree.errors.len != 0) return .{};
 
-    var diagnostics = std.ArrayListUnmanaged(types.Diagnostic){};
-    try diagnostics_gen.getAstCheckDiagnostics(server, arena, handle, &diagnostics);
-    if (diagnostics.items.len == 0) return .{};
+    var error_bundle = try diagnostics_gen.getAstCheckDiagnostics(server, handle);
+    defer error_bundle.deinit(server.allocator);
+    if (error_bundle.errorMessageCount() == 0) return .{};
 
     var analyser = server.initAnalyser(handle);
     defer analyser.deinit();
 
-    var builder = code_actions.Builder{
+    var builder: code_actions.Builder = .{
         .arena = arena,
         .analyser = &analyser,
         .handle = handle,
         .offset_encoding = server.offset_encoding,
     };
 
-    var actions = std.ArrayListUnmanaged(types.CodeAction){};
-    var remove_capture_actions = std.AutoHashMapUnmanaged(types.Range, void){};
-    for (diagnostics.items) |diagnostic| {
-        try builder.generateCodeAction(diagnostic, &actions, &remove_capture_actions);
-    }
+    var actions: std.ArrayListUnmanaged(types.CodeAction) = .{};
+    try builder.generateCodeAction(error_bundle, &actions);
 
-    var text_edits = std.ArrayListUnmanaged(types.TextEdit){};
+    var text_edits: std.ArrayListUnmanaged(types.TextEdit) = .{};
     for (actions.items) |action| {
         std.debug.assert(action.kind != null);
         std.debug.assert(action.edit != null);
@@ -1613,27 +1610,25 @@ fn inlayHintHandler(server: *Server, arena: std.mem.Allocator, request: types.In
 fn codeActionHandler(server: *Server, arena: std.mem.Allocator, request: types.CodeActionParams) Error!lsp.ResultType("textDocument/codeAction") {
     const handle = server.document_store.getHandle(request.textDocument.uri) orelse return null;
 
+    // as of right now, only ast-check errors may get a code action
+    if (handle.tree.errors.len != 0) return null;
+
+    var error_bundle = try diagnostics_gen.getAstCheckDiagnostics(server, handle);
+    defer error_bundle.deinit(server.allocator);
+    if (error_bundle.errorMessageCount() == 0) return null;
+
     var analyser = server.initAnalyser(handle);
     defer analyser.deinit();
 
-    var builder = code_actions.Builder{
+    var builder: code_actions.Builder = .{
         .arena = arena,
         .analyser = &analyser,
         .handle = handle,
         .offset_encoding = server.offset_encoding,
     };
 
-    // as of right now, only ast-check errors may get a code action
-    var diagnostics = std.ArrayListUnmanaged(types.Diagnostic){};
-    if (handle.tree.errors.len == 0) {
-        try diagnostics_gen.getAstCheckDiagnostics(server, arena, handle, &diagnostics);
-    }
-
-    var actions = std.ArrayListUnmanaged(types.CodeAction){};
-    var remove_capture_actions = std.AutoHashMapUnmanaged(types.Range, void){};
-    for (diagnostics.items) |diagnostic| {
-        try builder.generateCodeAction(diagnostic, &actions, &remove_capture_actions);
-    }
+    var actions: std.ArrayListUnmanaged(types.CodeAction) = .{};
+    try builder.generateCodeAction(error_bundle, &actions);
 
     const Result = lsp.types.getRequestMetadata("textDocument/codeAction").?.Result;
     const result = try arena.alloc(std.meta.Child(std.meta.Child(Result)), actions.items.len);
