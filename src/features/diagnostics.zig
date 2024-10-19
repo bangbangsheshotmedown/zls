@@ -44,7 +44,7 @@ pub fn generateDiagnostics(server: *Server, arena: std.mem.Allocator, handle: *D
         try getAstCheckDiagnostics(server, arena, handle, &diagnostics);
     }
 
-    if (server.config.enable_autofix) {
+    if (server.getAutofixMode() != .none) {
         try code_actions.collectAutoDiscardDiagnostics(tree, arena, &diagnostics, server.offset_encoding);
     }
 

@@ -18,8 +18,8 @@ enable_build_on_save: ?bool = null,
 /// If the `build.zig` has declared a 'check' step, it will be preferred over the default 'install' step.
 build_on_save_args: []const []const u8 = &.{},
 
-/// Whether to automatically fix errors on save. Currently supports adding and removing discards.
-enable_autofix: bool = false,
+/// TODO
+force_autofix: bool = false,
 
 /// Set level of semantic tokens. `partial` only includes information that requires semantic analysis.
 semantic_tokens: enum {

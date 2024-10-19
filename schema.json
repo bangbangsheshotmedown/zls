@@ -27,8 +27,8 @@
             },
             "default": []
         },
-        "enable_autofix": {
-            "description": "Whether to automatically fix errors on save. Currently supports adding and removing discards.",
+        "force_autofix": {
+            "description": "TODO",
             "type": "boolean",
             "default": false
         },

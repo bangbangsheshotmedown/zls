@@ -74,7 +74,7 @@ const ClientCapabilities = struct {
     supports_will_save: bool = false,
     supports_will_save_wait_until: bool = false,
     supports_publish_diagnostics: bool = false,
-    supports_code_action_fixall: bool = false,
+    supports_code_actions: bool = false,
     hover_supports_md: bool = false,
     signature_help_supports_md: bool = false,
     completion_doc_supports_md: bool = false,
@@ -332,15 +332,19 @@ fn initAnalyser(server: *Server, handle: ?*DocumentStore.Handle) Analyser {
     );
 }
 
-fn getAutofixMode(server: *Server) enum {
-    on_save,
-    will_save_wait_until,
+pub fn getAutofixMode(server: *Server) enum {
+    /// Autofix is implemented by providing `source.fixall` code actions.
     fixall,
+    /// Autofix is implemented using `textDocument/willSaveWaitUntil`.
+    /// Requires `force_autofix` to be enabled.
+    will_save_wait_until,
+    /// Autofix is implemented by send a `workspace/applyEdit` request after receiving a `textDocument/didSave` notification.
+    /// Requires `force_autofix` to be enabled.
+    on_save,
     none,
 } {
-    if (!server.config.enable_autofix) return .none;
-    // TODO https://github.com/zigtools/zls/issues/1093
-    // if (server.client_capabilities.supports_code_action_fixall) return .fixall;
+    if (server.client_capabilities.supports_code_actions) return .fixall;
+    if (!server.config.force_autofix) return .none;
     if (server.client_capabilities.supports_apply_edits) {
         if (server.client_capabilities.supports_will_save_wait_until) return .will_save_wait_until;
         return .on_save;
@@ -392,19 +396,11 @@ fn autofix(server: *Server, arena: std.mem.Allocator, handle: *DocumentStore.Han
 }
 
 fn initializeHandler(server: *Server, arena: std.mem.Allocator, request: types.InitializeParams) Error!types.InitializeResult {
-    var skip_set_fixall = false;
-
     if (request.clientInfo) |clientInfo| {
         server.client_capabilities.client_name = try server.allocator.dupe(u8, clientInfo.name);
 
         if (std.mem.eql(u8, clientInfo.name, "Sublime Text LSP")) {
             server.client_capabilities.max_detail_length = 256;
-            // TODO investigate why fixall doesn't work in sublime text
-            server.client_capabilities.supports_code_action_fixall = false;
-            skip_set_fixall = true;
-        } else if (std.mem.eql(u8, clientInfo.name, "Visual Studio Code")) {
-            server.client_capabilities.supports_code_action_fixall = true;
-            skip_set_fixall = true;
         }
     }
 
@@ -481,17 +477,8 @@ fn initializeHandler(server: *Server, arena: std.mem.Allocator, request: types.I
             server.client_capabilities.supports_will_save = synchronization.willSave orelse false;
             server.client_capabilities.supports_will_save_wait_until = synchronization.willSaveWaitUntil orelse false;
         }
-        if (textDocument.codeAction) |codeaction| {
-            if (codeaction.codeActionLiteralSupport) |literalSupport| {
-                if (!skip_set_fixall) {
-                    for (literalSupport.codeActionKind.valueSet) |code_action_kind| {
-                        if (code_action_kind.eql(.@"source.fixAll")) {
-                            server.client_capabilities.supports_code_action_fixall = true;
-                            break;
-                        }
-                    }
-                }
-            }
+        if (textDocument.codeAction) |_| {
+            server.client_capabilities.supports_code_actions = true;
         }
         if (textDocument.definition) |definition| {
             server.client_capabilities.supports_textDocument_definition_linkSupport = definition.linkSupport orelse false;
@@ -615,7 +602,7 @@ fn initializeHandler(server: *Server, arena: std.mem.Allocator, request: types.I
             },
             .documentHighlightProvider = .{ .bool = true },
             .hoverProvider = .{ .bool = true },
-            .codeActionProvider = .{ .bool = true },
+            .codeActionProvider = .{ .CodeActionOptions = .{ .codeActionKinds = code_actions.code_action_kinds } },
             .declarationProvider = .{ .bool = true },
             .definitionProvider = .{ .bool = true },
             .typeDefinitionProvider = .{ .bool = true },
@@ -1026,8 +1013,8 @@ pub fn updateConfiguration(
         }
     }
 
-    if (server.config.enable_autofix and server.getAutofixMode() == .none) {
-        log.warn("`enable_autofix` is ignored because it is not supported by {s}", .{server.client_capabilities.client_name orelse "your editor"});
+    if (server.config.force_autofix and server.getAutofixMode() == .none) {
+        log.warn("`force_autofix` is ignored because it is not supported by {s}", .{server.client_capabilities.client_name orelse "your editor"});
     }
 }
 

@@ -10,6 +10,12 @@ const types = @import("lsp").types;
 const offsets = @import("../offsets.zig");
 const tracy = @import("tracy");
 
+/// List of all code actions kinds that may be created.
+pub const code_action_kinds: []const types.CodeActionKind = &.{
+    .quickfix,
+    .@"source.fixAll",
+};
+
 pub const Builder = struct {
     arena: std.mem.Allocator,
     analyser: *Analyser,
